@@ -1,0 +1,7 @@
+packages:
+  - .
+allowBuilds:
+  # esbuild (pulled in transitively by vitest) resolves its prebuilt platform binary without
+  # needing its postinstall script -- same reasoning and setting as
+  # rackbops-ui-ux-std-lib's own pnpm-workspace.yaml.
+  esbuild: false

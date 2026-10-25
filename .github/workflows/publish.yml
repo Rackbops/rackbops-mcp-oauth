@@ -1,0 +1,165 @@
+name: publish
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Public npm publish. The DEFAULT path is OIDC trusted publishing -- no
+# long-lived token: GitHub mints a short-lived OIDC id-token (hence
+# `id-token: write`) and npm exchanges it against the trusted publisher
+# configured on npmjs.com for each package (organization Rackbops / repository
+# rackbops-mcp-oauth / workflow publish.yml), generating provenance
+# attestations automatically. `contents: read` is only for the checkout.
+#
+# BREAK-GLASS FALLBACK: if an `NPM_TOKEN` secret is set, the preflight step uses
+# it for classic token auth instead and OIDC is bypassed -- a manual escape
+# hatch for when the trusted publisher isn't configured yet or npm's OIDC is
+# down. Leave the secret UNSET for normal operation; the preflight then requires
+# the OIDC prerequisites. Token auth does not emit provenance.
+#
+# setup-node deliberately does NOT set `registry-url`: that makes it write a
+# `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` line into .npmrc, and
+# in the (default) no-token case that line is an empty `_authToken=` -- npm then
+# assumes auth is already configured and skips the OIDC exchange, failing with
+# ENEEDAUTH (actions/setup-node#1551). The token fallback instead writes that
+# auth line itself, only when a token actually exists. The default registry
+# (registry.npmjs.org) is the publish target with no registry-url set.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      # No registry-url / scope here -- see the header comment: setting
+      # registry-url writes an empty _authToken into .npmrc and breaks OIDC.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      # Trusted publishing requires npm CLI >= 11.5.1 (and Node >= 22.14).
+      # Upgrade explicitly rather than depend on whatever npm the pinned Node
+      # bundles. Pinned to the 11.x line (>= 11.5.1) so an unattended release
+      # (release.yml pushes the tag) can't break on a surprise npm major that
+      # raises its own Node floor above the runner's.
+      - run: npm install -g npm@^11.5.1
+
+      # Decide the auth path and fail fast, with an actionable message, when its
+      # prerequisites are missing -- otherwise `npm publish` bails out two steps
+      # later (after install + build) with a bare ENEEDAUTH, which npm emits for
+      # every auth problem, a missing/mismatched trusted publisher included
+      # (npm/cli#9088). The mode chosen here is exported for the publish step so
+      # its error trap can name the right cause.
+      #
+      # NODE_AUTH_TOKEN comes from the optional NPM_TOKEN secret (empty when
+      # unset -- the secrets context isn't allowed in `if:`, so the branch is in
+      # the shell, matching release.yml's RELEASE_TOKEN gate).
+      - name: Preflight -- verify publish auth
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # BREAK-GLASS: a set NPM_TOKEN switches to classic token auth. Write
+          # the auth line ourselves (only now that a token exists, so the empty-
+          # token trap can't bite), record the mode, and let the publish step's
+          # trap report a bad/expired token. No provenance in this mode.
+          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "NPM_TOKEN is set -- using classic token auth; OIDC trusted publishing is bypassed."
+            npm config set //registry.npmjs.org/:_authToken "${NODE_AUTH_TOKEN}" --location=user
+            echo "PUBLISH_AUTH_MODE=token" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          echo "No NPM_TOKEN -- using OIDC trusted publishing."
+          echo "PUBLISH_AUTH_MODE=oidc" >> "$GITHUB_ENV"
+          fail=0
+
+          # (1) id-token: write must be in effect, or npm has no token to
+          # exchange. GitHub exposes the mint endpoint via these two vars.
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+            echo "::error::OIDC id-token unavailable -- the job is missing 'permissions: id-token: write' (or it was overridden). Trusted publishing cannot authenticate. Set an NPM_TOKEN secret to fall back to token auth."
+            fail=1
+          fi
+
+          # (2) npm must be >= 11.5.1 -- the floor that speaks the exchange. An
+          # older npm ignores OIDC silently and falls through to token auth.
+          need=11.5.1; have="$(npm --version)"
+          if [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -n1)" != "$need" ]; then
+            echo "::error::npm ${have} is below the 11.5.1 trusted-publishing floor -- the 'npm install -g npm@^11.5.1' step did not take effect."
+            fail=1
+          fi
+
+          # (3) No _authToken may be configured. setup-node writes one when given
+          # registry-url; with no token secret it is empty, and npm then assumes
+          # auth is set and skips the OIDC exchange (actions/setup-node#1551).
+          for rc in "${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}" "$HOME/.npmrc" "${RUNNER_TEMP:-/nonexistent}/.npmrc" ".npmrc"; do
+            if [ -f "$rc" ] && grep -q '_authToken' "$rc"; then
+              echo "::error::${rc} sets an _authToken line, which makes npm skip the OIDC exchange (actions/setup-node#1551). Do not pass registry-url to setup-node in this workflow."
+              fail=1
+            fi
+          done
+
+          if [ "$fail" -ne 0 ]; then
+            exit 1
+          fi
+          echo "Preflight OK: id-token present, npm ${have}, no _authToken override."
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      # Enumerated once from the workspace (pnpm-workspace.yaml: styles,
+      # components/*) rather than hard-coded, so a future components/svelte
+      # needs no change to THIS file (issue #34) -- it's still on
+      # release.sh's VERSION_FILES to actually bump the new package's
+      # version, or its version will never match the tag and the check
+      # below will refuse to publish anything, every release, until it's
+      # added there too. That's an intentionally louder failure than the
+      # old hard-coded loop's silent "never even attempt this package".
+      - name: Verify the tag matches every package's version
+        run: |
+          pnpm -r ls --depth -1 --json | node -e '
+            const pkgs = JSON.parse(require("fs").readFileSync(0, "utf8"));
+            for (const p of pkgs) if (!p.private) console.log([p.name, p.version, p.path].join("\t"));
+          ' > /tmp/publishable-packages.tsv
+          # A stray hand-pushed tag (or one on a commit whose package.json
+          # doesn't match) must not publish ANY package under a version the
+          # code doesn't actually carry -- so every package's version is
+          # checked against the tag before publishing starts on the next
+          # step, not interleaved with it (issue #33).
+          while IFS=$'\t' read -r name version path; do
+            if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+              echo "Tag ${GITHUB_REF_NAME} does not match ${path}/package.json's version (v${version}) -- refusing to publish." >&2
+              exit 1
+            fi
+          done < /tmp/publishable-packages.tsv
+
+      # --access public: a scoped package publishes as restricted by default.
+      # Skip a package already on the registry at this version, so a rerun
+      # after a partial failure (one package published, another didn't)
+      # completes the missing ones instead of aborting on a 403 "cannot
+      # publish over previously published version" (issue #33).
+      - name: Publish every workspace package
+        run: |
+          while IFS=$'\t' read -r name version path; do
+            if npm view "${name}@${version}" version >/dev/null 2>&1; then
+              echo "${name}@${version} is already published. Skipping."
+              continue
+            fi
+            # Capture output so an auth failure can be reframed to the actual
+            # cause for the mode preflight chose (npm reports every auth problem
+            # as a bare ENEEDAUTH/E401/E404 -- npm/cli#9088).
+            if ! out="$(cd "$path" && npm publish --access public 2>&1)"; then
+              printf '%s\n' "${out}" >&2
+              if printf '%s' "${out}" | grep -Eq 'ENEEDAUTH|E401|E404|need auth|Unable to authenticate'; then
+                if [ "${PUBLISH_AUTH_MODE:-oidc}" = "token" ]; then
+                  echo "::error::${name}@${version} failed to authenticate with NPM_TOKEN -- the token is expired, malformed, or lacks publish rights to ${name}. Rotate the secret or unset it to use OIDC."
+                else
+                  echo "::error::${name}@${version} could not authenticate for publish. Configure a trusted publisher for ${name} on npmjs.com -- organization Rackbops / repository rackbops-mcp-oauth / workflow publish.yml / Environment blank (all case-sensitive) -- then re-run this workflow. (Or set an NPM_TOKEN secret to fall back to token auth.)"
+                fi
+              fi
+              exit 1
+            fi
+            printf '%s\n' "${out}"
+          done < /tmp/publishable-packages.tsv

@@ -1,0 +1,61 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Needed to create tags, releases, and push the version-bump commit.
+permissions:
+  contents: write
+
+# Only one release run at a time. If a second push lands while a release is in
+# progress, queue it -- don't cancel. The queued run finds no unreleased commits
+# (the tag was already created) and exits early.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # Skip the bump commit re-releasing itself. (The `secrets` context is NOT
+    # available in a job-level `if` -- only github/needs/vars/inputs -- so the
+    # "inert until RELEASE_TOKEN exists" gate lives in the release step below,
+    # which reads the token from step-level env where secrets ARE available.)
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+      !startsWith(github.event.head_commit.message, 'chore(release):') }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history is required to find the previous release tag.
+          fetch-depth: 0
+          # RELEASE_TOKEN so the bump commit bypasses branch protection and the
+          # tag push triggers publish.yml (a GITHUB_TOKEN push would not).
+          # Falls back to the default GITHUB_TOKEN for the checkout when the
+          # secret is unset -- the release step then no-ops, so that token's
+          # write scope is never exercised.
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Release if there are unreleased changes
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "RELEASE_TOKEN not set — release/publish is inert. Skipping."
+            exit 0
+          fi
+          chmod +x .github/scripts/release.sh .github/scripts/next-version.sh
+          .github/scripts/release.sh
