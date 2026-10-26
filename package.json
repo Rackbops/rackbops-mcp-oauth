@@ -1,0 +1,43 @@
+{
+  "name": "@rackbops/mcp-oauth",
+  "version": "0.1.0",
+  "description": "OAuth 2.1 authorization server for remote MCP servers: DCR, PKCE S256, consent page behind a usr sign-in, token, refresh rotation, SQLite grants store.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rackbops/rackbops-mcp-oauth.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@12.15.0",
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "check": "biome check . && pnpm typecheck && pnpm test && pnpm build"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.14",
+    "@types/node": "^26.6.3",
+    "typescript": "^7.0.0",
+    "vitest": "^5.0.2"
+  }
+}
