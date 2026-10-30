@@ -8,7 +8,14 @@ export {
   resourceMetadataUrl,
 } from "./discovery.js"
 export { createRateLimiter, type RateLimiter } from "./rateLimit.js"
-export { DEFAULT_REDIRECT_POLICY, type RedirectPolicy } from "./redirect.js"
+export {
+  DEFAULT_REDIRECT_POLICY,
+  isLoopbackHttp,
+  LOOPBACK_HOSTNAMES,
+  type RedirectPolicy,
+  redirectMatchesRegistered,
+  validateRedirectUri,
+} from "./redirect.js"
 export { createRegistrationHandler } from "./registration.js"
 export { joinScopes, parseScopes, scopeNames, splitScopes } from "./scopes.js"
 export { OAuthStore, sha256Hex } from "./store.js"
