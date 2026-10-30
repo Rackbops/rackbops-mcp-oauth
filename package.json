@@ -1,6 +1,6 @@
 {
   "name": "@rackbops/mcp-oauth",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "OAuth 2.1 authorization server for remote MCP servers: DCR, PKCE S256, consent page behind a usr sign-in, token, refresh rotation, SQLite grants store.",
   "license": "MIT",
   "type": "module",
