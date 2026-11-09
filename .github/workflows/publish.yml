@@ -109,14 +109,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
 
-      # Enumerated once from the workspace (pnpm-workspace.yaml: styles,
-      # components/*) rather than hard-coded, so a future components/svelte
-      # needs no change to THIS file (issue #34) -- it's still on
-      # release.sh's VERSION_FILES to actually bump the new package's
-      # version, or its version will never match the tag and the check
-      # below will refuse to publish anything, every release, until it's
-      # added there too. That's an intentionally louder failure than the
-      # old hard-coded loop's silent "never even attempt this package".
+      # Enumerated from the workspace so every public package's version is checked against the tag before anything is published.
       - name: Verify the tag matches every package's version
         run: |
           pnpm -r ls --depth -1 --json | node -e '

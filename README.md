@@ -44,7 +44,13 @@ const limiter = createRateLimiter(oauth.registration.perSourcePerHour, 3_600_000
 const register = createRegistrationHandler({ store, oauth, limiter })
 const authorize = createAuthorizeHandler({ store, oauth, identity })
 const token = createTokenHandler({ store, oauth /*, memberCheck */ })
+setInterval(
+  () => store.prune(oauth.lifetimes.refreshIdleDays * 24 * 3600 * 1000),
+  3_600_000,
+).unref()
 ```
+
+Call `store.prune` on a timer; nothing else sweeps expired rows.
 
 Then route `/register`, `/authorize`, `/token`, and serve `protectedResourceMetadata(issuer, scopes)` at
 `/.well-known/oauth-protected-resource[/mcp]` and `authorizationServerMetadata(issuer, scopes)` at
