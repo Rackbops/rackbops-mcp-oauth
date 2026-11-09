@@ -44,7 +44,8 @@ export function parseCookies(header: string | null): Map<string, string> {
     const trimmed = part.trim()
     const eq = trimmed.indexOf("=")
     if (eq === -1) continue
-    map.set(trimmed.slice(0, eq), trimmed.slice(eq + 1))
+    const name = trimmed.slice(0, eq)
+    if (!map.has(name)) map.set(name, trimmed.slice(eq + 1))
   }
   return map
 }

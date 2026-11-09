@@ -9,7 +9,7 @@ import {
   register,
   tokens,
 } from "../test/harness.js"
-import { createUsrIdentity } from "./usr.js"
+import { createUsrIdentity, parseCookies } from "./usr.js"
 
 const CONSENT_QUERY = (clientId: string, challenge: string, scope?: string) =>
   new URLSearchParams({
@@ -156,5 +156,13 @@ describe("usr identity", () => {
     expect(
       await usr.fromRequest(new Request("https://x/", { headers: { cookie: "nz_id=a.b.c" } })),
     ).toBeNull()
+  })
+})
+
+describe("parseCookies", () => {
+  it("keeps the first value when a cookie name repeats", () => {
+    const cookies = parseCookies("nz_id=first; other=x; nz_id=second")
+    expect(cookies.get("nz_id")).toBe("first")
+    expect(cookies.get("other")).toBe("x")
   })
 })
