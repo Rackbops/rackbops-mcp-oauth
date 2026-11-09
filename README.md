@@ -46,6 +46,9 @@ const authorize = createAuthorizeHandler({ store, oauth, identity })
 const token = createTokenHandler({ store, oauth /*, memberCheck */ })
 ```
 
+The handlers bound what they parse (`/register` and `/token` refuse a body over 4 KB with 413); put a
+real body limit at the host, since the body is still read first.
+
 Then route `/register`, `/authorize`, `/token`, and serve `protectedResourceMetadata(issuer, scopes)` at
 `/.well-known/oauth-protected-resource[/mcp]` and `authorizationServerMetadata(issuer, scopes)` at
 `/.well-known/oauth-authorization-server`. Verify a bearer by `store.getAccessToken(sha256Hex(raw))`,
