@@ -4,6 +4,8 @@ import type { RateLimiter } from "./rateLimit.js"
 import { type RedirectPolicy, validateRedirectUri } from "./redirect.js"
 import type { OAuthStore } from "./store.js"
 
+const MAX_BODY_BYTES = 4096
+
 // RFC 7591 Dynamic Client Registration at POST /register. Ported from Rackbops/discord-mcp
 // `src/service/clientRegistration.ts` (client-name control/format-character refusal, #792; redirect
 // allowlist, #783). Public clients only: no secret is ever issued, and the response always says
@@ -154,9 +156,16 @@ export function createRegistrationHandler(
     const hit = limiter.hit(`register:${source}`)
     if (!hit.allowed) return unavailable(hit.retryAfterSeconds)
 
+    const bodyText = await request.text()
+    if (Buffer.byteLength(bodyText, "utf8") > MAX_BODY_BYTES) {
+      return json(413, {
+        error: "invalid_client_metadata",
+        error_description: "request body too large",
+      })
+    }
     let parsedBody: unknown
     try {
-      parsedBody = JSON.parse(await request.text())
+      parsedBody = JSON.parse(bodyText)
     } catch {
       return json(400, {
         error: "invalid_client_metadata",

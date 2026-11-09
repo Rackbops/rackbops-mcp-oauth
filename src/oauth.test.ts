@@ -93,10 +93,16 @@ describe("client registration", () => {
 })
 
 describe("authorize + token", () => {
-  it("runs the whole flow and the access token works exactly once per code", async () => {
+  it("runs the whole flow and the issued access token is accepted", async () => {
     const h = harness()
-    const { clientId } = await connect(h)
+    const { clientId, access } = await connect(h)
     expect(clientId).toMatch(/^mft_c_/)
+    const mcp = await h.req("/mcp", {
+      method: "POST",
+      headers: { authorization: `Bearer ${access}`, "content-type": "application/json" },
+      body: "{}",
+    })
+    expect(mcp.status).toBe(200)
   })
 
   it("redirects to usr sign-in with no cookie, and errors instead of looping", async () => {
@@ -237,6 +243,41 @@ describe("authorize + token", () => {
     expect(mcp.status).toBe(401)
   })
 
+  it("refuses a code presented by a different client", async () => {
+    const h = harness()
+    const c = await codeFor(h)
+    const other = await register(h)
+    const res = await exchange(h, c, { client_id: other })
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as { error: string }).error).toBe("invalid_grant")
+  })
+
+  it("refuses a code presented with a different redirect_uri", async () => {
+    const h = harness()
+    const c = await codeFor(h)
+    const res = await exchange(h, c, { redirect_uri: "http://127.0.0.1/cb" })
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as { error: string }).error).toBe("invalid_grant")
+  })
+
+  it("retires the grace sibling once its twin is used", async () => {
+    const h = harness()
+    const { clientId, refresh } = await connect(h)
+    const refreshWith = (t: string) =>
+      tokens(h, {
+        grant_type: "refresh_token",
+        client_id: clientId,
+        refresh_token: t,
+        resource: `${ISSUER}/mcp`,
+      })
+    const a = (await (await refreshWith(refresh)).json()) as { refresh_token: string }
+    const b = (await (await refreshWith(refresh)).json()) as { refresh_token: string }
+    const grantId = h.store.getRefreshToken(sha256Hex(refresh))?.grantId ?? ""
+    expect((await refreshWith(a.refresh_token)).status).toBe(200)
+    expect((await refreshWith(b.refresh_token)).status).toBe(400)
+    expect(h.store.getGrant(grantId)?.revokedAt).not.toBeNull()
+  })
+
   it("expires codes", async () => {
     const h = harness()
     const c = await codeFor(h)
@@ -333,6 +374,30 @@ describe("abuse bounds", () => {
     expect((await registerRaw(h)).status).toBe(201)
   })
 
+  it("bounds the /register body at 4096 bytes", async () => {
+    const h = harness()
+    const post = (body: string) =>
+      h.req("/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      })
+    const base = JSON.stringify({ redirect_uris: ["http://localhost/cb"], x: "" })
+    const pad = (n: number) =>
+      JSON.stringify({ redirect_uris: ["http://localhost/cb"], x: "a".repeat(n) })
+    const fit = pad(4096 - Buffer.byteLength(base))
+    expect(Buffer.byteLength(fit)).toBe(4096)
+    expect((await post(fit)).status).toBe(201)
+    const over = pad(4097 - Buffer.byteLength(base))
+    expect(Buffer.byteLength(over)).toBe(4097)
+    const res = await post(over)
+    expect(res.status).toBe(413)
+    expect(await res.json()).toEqual({
+      error: "invalid_client_metadata",
+      error_description: "request body too large",
+    })
+  })
+
   it("prunes day-old grantless clients but keeps ones that completed a grant", async () => {
     const h = harness()
     const { clientId } = await connect(h)
@@ -365,6 +430,46 @@ describe("abuse bounds", () => {
     expect(h.store.getRefreshToken(sha256Hex(active.refresh))).toBeDefined()
   })
 
+  it("revokes a grant idle past refreshIdleDays on its next refresh", async () => {
+    const h = harness()
+    const { clientId, refresh } = await connect(h)
+    h.now.t += 31 * 24 * 60 * 60 * 1000
+    const refreshWith = () =>
+      tokens(h, {
+        grant_type: "refresh_token",
+        client_id: clientId,
+        refresh_token: refresh,
+        resource: `${ISSUER}/mcp`,
+      })
+    const first = await refreshWith()
+    expect(first.status).toBe(400)
+    expect(((await first.json()) as { error: string }).error).toBe("invalid_grant")
+    const second = await refreshWith()
+    expect(second.status).toBe(400)
+    expect(((await second.json()) as { error: string }).error).toBe("invalid_grant")
+  })
+
+  it("caps live consent requests per source and frees them when they expire", async () => {
+    const h = harness()
+    const clientId = await register(h)
+    const open = () => {
+      const q = new URLSearchParams({
+        client_id: clientId,
+        redirect_uri: CALLBACK,
+        response_type: "code",
+        code_challenge: pkce().challenge,
+        code_challenge_method: "S256",
+        state: "st1",
+        resource: `${ISSUER}/mcp`,
+      })
+      return h.req(`/authorize?${q}`)
+    }
+    for (let i = 0; i < 20; i++) expect((await open()).status).toBe(200)
+    expect((await open()).status).toBe(429)
+    h.now.t += 601 * 1000
+    expect((await open()).status).toBe(200)
+  })
+
   it("stops refreshing a grant past its absolute lifetime", async () => {
     const h = harness()
     const { clientId, refresh } = await connect(h)
@@ -377,8 +482,8 @@ describe("abuse bounds", () => {
         refresh_token: token,
         resource: `${ISSUER}/mcp`,
       })
-      if (day < 8) token = ((await res.json()) as { refresh_token: string }).refresh_token
-      else expect(res.status).toBe(200)
+      token = ((await res.json()) as { refresh_token: string }).refresh_token
+      expect(res.status).toBe(200)
     }
     h.now.t += 24 * 60 * 60 * 1000
     const res = await tokens(h, {
