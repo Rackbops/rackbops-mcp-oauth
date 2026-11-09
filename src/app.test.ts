@@ -1,3 +1,4 @@
+import { createSign, generateKeyPairSync } from "node:crypto"
 import { describe, expect, it } from "vitest"
 import {
   CALLBACK,
@@ -156,5 +157,54 @@ describe("usr identity", () => {
     expect(
       await usr.fromRequest(new Request("https://x/", { headers: { cookie: "nz_id=a.b.c" } })),
     ).toBeNull()
+  })
+
+  describe("with a signed token", () => {
+    const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" })
+    const kid = "k1"
+    const jwk = { ...publicKey.export({ format: "jwk" }), kid }
+    const NOW = 1_800_000_000_000
+    const usr = createUsrIdentity({
+      usrUrl: "https://id.example.test",
+      app: "meals",
+      fetch: async () => Response.json({ keys: [jwk] }),
+      now: () => NOW,
+    })
+    const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url")
+    function sign(
+      claims: Record<string, unknown> = {},
+      header: Record<string, unknown> = {},
+    ): Request {
+      const h = b64({ alg: "ES256", kid, ...header })
+      const p = b64({
+        iss: "usr",
+        sub: "u1",
+        name: "Anne",
+        roles: ["meals:member", "other:x"],
+        exp: NOW / 1000 + 60,
+        ...claims,
+      })
+      const sig = createSign("SHA256")
+        .update(`${h}.${p}`)
+        .sign({ key: privateKey, dsaEncoding: "ieee-p1363" })
+      return new Request("https://x/", {
+        headers: { cookie: `nz_id=${h}.${p}.${sig.toString("base64url")}` },
+      })
+    }
+
+    it("accepts a valid token and strips the app prefix from roles", async () => {
+      expect(await usr.fromRequest(sign())).toEqual({ sub: "u1", name: "Anne", roles: ["member"] })
+    })
+
+    it.each([
+      ["expired", () => sign({ exp: NOW / 1000 - 1 })],
+      ["wrong alg", () => sign({}, { alg: "HS256" })],
+      ["delegation typ", () => sign({}, { typ: "dlg+jwt" })],
+      ["act claim", () => sign({ act: { sub: "x" } })],
+      ["wrong issuer", () => sign({ iss: "other" })],
+      ["unknown kid", () => sign({}, { kid: "nope" })],
+    ])("refuses a token that is %s", async (_name, make) => {
+      expect(await usr.fromRequest(make())).toBeNull()
+    })
   })
 })

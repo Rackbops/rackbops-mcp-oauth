@@ -16,6 +16,7 @@ import {
   validateRedirectUri,
 } from "./redirect.js"
 import { parseRegistrationRequest } from "./registration.js"
+import { sha256Hex } from "./store.js"
 
 describe("redirect policy", () => {
   const ok = (u: string) => validateRedirectUri(u, DEFAULT_REDIRECT_POLICY)
@@ -236,6 +237,41 @@ describe("authorize + token", () => {
     expect(mcp.status).toBe(401)
   })
 
+  it("refuses a code presented by a different client", async () => {
+    const h = harness()
+    const c = await codeFor(h)
+    const other = await register(h)
+    const res = await exchange(h, c, { client_id: other })
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as { error: string }).error).toBe("invalid_grant")
+  })
+
+  it("refuses a code presented with a different redirect_uri", async () => {
+    const h = harness()
+    const c = await codeFor(h)
+    const res = await exchange(h, c, { redirect_uri: "http://127.0.0.1/cb" })
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as { error: string }).error).toBe("invalid_grant")
+  })
+
+  it("retires the grace sibling once its twin is used", async () => {
+    const h = harness()
+    const { clientId, refresh } = await connect(h)
+    const refreshWith = (t: string) =>
+      tokens(h, {
+        grant_type: "refresh_token",
+        client_id: clientId,
+        refresh_token: t,
+        resource: `${ISSUER}/mcp`,
+      })
+    const a = (await (await refreshWith(refresh)).json()) as { refresh_token: string }
+    const b = (await (await refreshWith(refresh)).json()) as { refresh_token: string }
+    const grantId = h.store.getRefreshToken(sha256Hex(refresh))?.grantId ?? ""
+    expect((await refreshWith(a.refresh_token)).status).toBe(200)
+    expect((await refreshWith(b.refresh_token)).status).toBe(400)
+    expect(h.store.getGrant(grantId)?.revokedAt).not.toBeNull()
+  })
+
   it("expires codes", async () => {
     const h = harness()
     const c = await codeFor(h)
@@ -332,6 +368,30 @@ describe("abuse bounds", () => {
     expect((await registerRaw(h)).status).toBe(201)
   })
 
+  it("bounds the /register body at 4096 bytes", async () => {
+    const h = harness()
+    const post = (body: string) =>
+      h.req("/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      })
+    const base = JSON.stringify({ redirect_uris: ["http://localhost/cb"], x: "" })
+    const pad = (n: number) =>
+      JSON.stringify({ redirect_uris: ["http://localhost/cb"], x: "a".repeat(n) })
+    const fit = pad(4096 - Buffer.byteLength(base))
+    expect(Buffer.byteLength(fit)).toBe(4096)
+    expect((await post(fit)).status).toBe(201)
+    const over = pad(4097 - Buffer.byteLength(base))
+    expect(Buffer.byteLength(over)).toBe(4097)
+    const res = await post(over)
+    expect(res.status).toBe(413)
+    expect(await res.json()).toEqual({
+      error: "invalid_client_metadata",
+      error_description: "request body too large",
+    })
+  })
+
   it("prunes day-old grantless clients but keeps ones that completed a grant", async () => {
     const h = harness()
     const { clientId } = await connect(h)
@@ -354,8 +414,8 @@ describe("abuse bounds", () => {
         refresh_token: token,
         resource: `${ISSUER}/mcp`,
       })
-      if (day < 8) token = ((await res.json()) as { refresh_token: string }).refresh_token
-      else expect(res.status).toBe(200)
+      token = ((await res.json()) as { refresh_token: string }).refresh_token
+      expect(res.status).toBe(200)
     }
     h.now.t += 24 * 60 * 60 * 1000
     const res = await tokens(h, {
