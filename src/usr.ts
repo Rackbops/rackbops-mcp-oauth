@@ -37,14 +37,17 @@ interface CachedKey {
   key: KeyObject
 }
 
-function parseCookie(header: string | null, name: string): string | undefined {
-  if (header === null) return undefined
+export function parseCookies(header: string | null): Map<string, string> {
+  const map = new Map<string, string>()
+  if (header === null) return map
   for (const part of header.split(";")) {
     const trimmed = part.trim()
     const eq = trimmed.indexOf("=")
-    if (eq > 0 && trimmed.slice(0, eq) === name) return trimmed.slice(eq + 1)
+    if (eq === -1) continue
+    const name = trimmed.slice(0, eq)
+    if (!map.has(name)) map.set(name, trimmed.slice(eq + 1))
   }
-  return undefined
+  return map
 }
 
 export function createUsrIdentity(options: UsrVerifierOptions): IdentityPort {
@@ -132,7 +135,7 @@ export function createUsrIdentity(options: UsrVerifierOptions): IdentityPort {
 
   return {
     async fromRequest(request) {
-      const token = parseCookie(request.headers.get("cookie"), cookieName)
+      const token = parseCookies(request.headers.get("cookie")).get(cookieName)
       return token === undefined ? null : verify(token)
     },
     signInUrl(returnUrl) {

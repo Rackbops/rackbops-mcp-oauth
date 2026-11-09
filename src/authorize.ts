@@ -11,7 +11,7 @@ import {
 import { clientIdPattern } from "./registration.js"
 import { joinScopes, parseScopes, splitScopes } from "./scopes.js"
 import { type OAuthStore, sha256Hex } from "./store.js"
-import type { Identity, IdentityPort } from "./usr.js"
+import { type Identity, type IdentityPort, parseCookies } from "./usr.js"
 
 // GET/POST /authorize (RFC 6749 4.1). Parameter validation, the two error shapes (a page before a
 // redirect_uri can be trusted, a redirect after), the request row and its __Host- binding cookie are
@@ -157,18 +157,6 @@ function constantTimeEqualHex(aHex: string, bHex: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b)
 }
 
-function parseCookies(header: string | null): Map<string, string> {
-  const map = new Map<string, string>()
-  if (header === null) return map
-  for (const part of header.split(";")) {
-    const trimmed = part.trim()
-    const eq = trimmed.indexOf("=")
-    if (eq === -1) continue
-    map.set(trimmed.slice(0, eq), trimmed.slice(eq + 1))
-  }
-  return map
-}
-
 function redirectResponse(
   target: string,
   params: Record<string, string>,
@@ -305,7 +293,6 @@ export function createAuthorizeHandler(deps: AuthorizeDeps): AuthorizeHandler {
         disclosures: app.scopes
           .filter((s) => splitScopes(result.scopes, app.scopes).includes(s.name))
           .map((s) => s.disclosureHtml),
-        error: null,
       }),
       { status: 200, headers },
     )
