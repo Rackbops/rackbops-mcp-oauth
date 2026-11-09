@@ -30,7 +30,9 @@ describe("next-version.sh", () => {
   })
 })
 
-describe("release.sh (dry run)", () => {
+// Each test builds a scratch git repo and spawns git and bash several times; on Windows (Git Bash)
+// that can exceed vitest's 5 s default under load.
+describe("release.sh (dry run)", { timeout: 30_000 }, () => {
   const dirs: string[] = []
   afterEach(() => {
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
