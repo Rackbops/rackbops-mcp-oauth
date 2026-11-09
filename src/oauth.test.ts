@@ -92,10 +92,16 @@ describe("client registration", () => {
 })
 
 describe("authorize + token", () => {
-  it("runs the whole flow and the access token works exactly once per code", async () => {
+  it("runs the whole flow and the issued access token is accepted", async () => {
     const h = harness()
-    const { clientId } = await connect(h)
+    const { clientId, access } = await connect(h)
     expect(clientId).toMatch(/^mft_c_/)
+    const mcp = await h.req("/mcp", {
+      method: "POST",
+      headers: { authorization: `Bearer ${access}`, "content-type": "application/json" },
+      body: "{}",
+    })
+    expect(mcp.status).toBe(200)
   })
 
   it("redirects to usr sign-in with no cookie, and errors instead of looping", async () => {
@@ -340,6 +346,46 @@ describe("abuse bounds", () => {
     h.store.prune(30 * 24 * 60 * 60 * 1000)
     expect(h.store.getClient(stale)).toBeUndefined()
     expect(h.store.getClient(clientId)).toBeDefined()
+  })
+
+  it("revokes a grant idle past refreshIdleDays on its next refresh", async () => {
+    const h = harness()
+    const { clientId, refresh } = await connect(h)
+    h.now.t += 31 * 24 * 60 * 60 * 1000
+    const refreshWith = () =>
+      tokens(h, {
+        grant_type: "refresh_token",
+        client_id: clientId,
+        refresh_token: refresh,
+        resource: `${ISSUER}/mcp`,
+      })
+    const first = await refreshWith()
+    expect(first.status).toBe(400)
+    expect(((await first.json()) as { error: string }).error).toBe("invalid_grant")
+    const second = await refreshWith()
+    expect(second.status).toBe(400)
+    expect(((await second.json()) as { error: string }).error).toBe("invalid_grant")
+  })
+
+  it("caps live consent requests per source and frees them when they expire", async () => {
+    const h = harness()
+    const clientId = await register(h)
+    const open = () => {
+      const q = new URLSearchParams({
+        client_id: clientId,
+        redirect_uri: CALLBACK,
+        response_type: "code",
+        code_challenge: pkce().challenge,
+        code_challenge_method: "S256",
+        state: "st1",
+        resource: `${ISSUER}/mcp`,
+      })
+      return h.req(`/authorize?${q}`)
+    }
+    for (let i = 0; i < 20; i++) expect((await open()).status).toBe(200)
+    expect((await open()).status).toBe(429)
+    h.now.t += 601 * 1000
+    expect((await open()).status).toBe(200)
   })
 
   it("stops refreshing a grant past its absolute lifetime", async () => {
