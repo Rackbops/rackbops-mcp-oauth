@@ -10,7 +10,7 @@ const ESCAPES: Record<string, string> = {
   "'": "&#39;",
 }
 
-export function escapeHtml(value: string): string {
+function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (c) => ESCAPES[c] as string)
 }
 
@@ -56,7 +56,6 @@ export interface ConsentPageInput {
   summary: string
   /** Trusted HTML for each optional scope the client asked for (`ScopeDef.disclosureHtml`). */
   disclosures: readonly string[]
-  error: string | null
 }
 
 export function renderConsentPage(input: ConsentPageInput): string {
@@ -66,9 +65,8 @@ export function renderConsentPage(input: ConsentPageInput): string {
     : `<code>${escapeHtml(input.hostname)}</code>`
   const name = input.memberName === "" ? "you" : escapeHtml(input.memberName)
   const confirm = input.disclosures.join("")
-  const error = input.error === null ? "" : `<p class="err">${escapeHtml(input.error)}</p>`
   return shell(
     `Connect to ${input.appName}`,
-    `<h1>Connect to ${escapeHtml(input.appName)}?</h1>${error}<p><strong>${who}</strong> (${where}) wants to ${input.summary} as ${name}.</p>${confirm}<p>Only allow this if you just asked an assistant such as ChatGPT or Claude to connect.</p><form method="post" action="/authorize"><input type="hidden" name="request_id" value="${escapeHtml(input.requestId)}"><button class="allow" name="decision" value="allow" type="submit">Allow</button><button name="decision" value="deny" type="submit">Cancel</button></form>`,
+    `<h1>Connect to ${escapeHtml(input.appName)}?</h1><p><strong>${who}</strong> (${where}) wants to ${input.summary} as ${name}.</p>${confirm}<p>Only allow this if you just asked an assistant such as ChatGPT or Claude to connect.</p><form method="post" action="/authorize"><input type="hidden" name="request_id" value="${escapeHtml(input.requestId)}"><button class="allow" name="decision" value="allow" type="submit">Allow</button><button name="decision" value="deny" type="submit">Cancel</button></form>`,
   )
 }

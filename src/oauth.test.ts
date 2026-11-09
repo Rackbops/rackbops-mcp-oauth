@@ -16,6 +16,7 @@ import {
   validateRedirectUri,
 } from "./redirect.js"
 import { parseRegistrationRequest } from "./registration.js"
+import { sha256Hex } from "./store.js"
 
 describe("redirect policy", () => {
   const ok = (u: string) => validateRedirectUri(u, DEFAULT_REDIRECT_POLICY)
@@ -340,6 +341,28 @@ describe("abuse bounds", () => {
     h.store.prune(30 * 24 * 60 * 60 * 1000)
     expect(h.store.getClient(stale)).toBeUndefined()
     expect(h.store.getClient(clientId)).toBeDefined()
+  })
+
+  it("prunes an idle grant with its tokens and leaves an active grant alone", async () => {
+    const h = harness()
+    const day = 24 * 60 * 60 * 1000
+    const idle = await connect(h)
+    h.now.t += 31 * day
+    const active = await connect(h)
+    h.now.t += day
+    const grantOf = (c: { access: string; refresh: string }) => {
+      const a = h.store.getAccessToken(sha256Hex(c.access))
+      return { a, r: h.store.getRefreshToken(sha256Hex(c.refresh)) }
+    }
+    const idleRows = grantOf(idle)
+    const activeRows = grantOf(active)
+    expect(idleRows.a).toBeDefined()
+    h.store.prune(30 * day)
+    expect(h.store.getGrant(idleRows.a?.grantId ?? "")).toBeUndefined()
+    expect(h.store.getAccessToken(sha256Hex(idle.access))).toBeUndefined()
+    expect(h.store.getRefreshToken(sha256Hex(idle.refresh))).toBeUndefined()
+    expect(h.store.getGrant(activeRows.a?.grantId ?? "")).toBeDefined()
+    expect(h.store.getRefreshToken(sha256Hex(active.refresh))).toBeDefined()
   })
 
   it("stops refreshing a grant past its absolute lifetime", async () => {

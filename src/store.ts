@@ -577,14 +577,11 @@ export class OAuthStore {
         .run(now - 24 * 60 * 60 * 1000)
       this.db.prepare("DELETE FROM oauth_codes WHERE expires_at < ?").run(now - 24 * 60 * 60 * 1000)
       this.db.prepare("DELETE FROM oauth_access_tokens WHERE expires_at < ?").run(now)
-      const idle = this.db
-        .prepare("SELECT grant_id FROM oauth_grants WHERE last_used_at < ?")
-        .all(now - idleMs) as { grant_id: string }[]
-      for (const { grant_id } of idle) {
-        this.db.prepare("DELETE FROM oauth_refresh_tokens WHERE grant_id = ?").run(grant_id)
-        this.db.prepare("DELETE FROM oauth_access_tokens WHERE grant_id = ?").run(grant_id)
-        this.db.prepare("DELETE FROM oauth_grants WHERE grant_id = ?").run(grant_id)
-      }
+      const cutoff = now - idleMs
+      const idle = "SELECT grant_id FROM oauth_grants WHERE last_used_at < ?"
+      this.db.prepare(`DELETE FROM oauth_refresh_tokens WHERE grant_id IN (${idle})`).run(cutoff)
+      this.db.prepare(`DELETE FROM oauth_access_tokens WHERE grant_id IN (${idle})`).run(cutoff)
+      this.db.prepare("DELETE FROM oauth_grants WHERE last_used_at < ?").run(cutoff)
     })
   }
 }
