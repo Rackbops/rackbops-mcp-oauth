@@ -6,11 +6,12 @@ import {
 
 // Host and Origin allowlist (DNS-rebinding and cross-origin guard) for every route, as plain functions
 // over `Headers` so a `node:http` server can use it as well as Hono (`../hono/hostGuard.ts`). Moved
-// from Rackbops/meals-for-two and Rackbops/tracker-mcp `src/hostGuard.ts` (byte-identical there), which
-// ported it from Rackbops/discord-mcp `src/service/hostValidation.ts` and `hostHeader.ts`, on the SDK's
-// own header parser. An absent Origin is fine (server-side MCP clients send none); a present one must
-// resolve to localhost or a listed public host. Localhost stays allowed so the container's own health
-// probe works. The scheme is not checked: the guard is about WHICH host is trusted.
+// from Rackbops/meals-for-two and Rackbops/tracker-mcp `src/hostGuard.ts` (the same there but for
+// tracker-mcp exporting `isPlainHostHeader`), which ported it from Rackbops/discord-mcp
+// `src/service/hostValidation.ts` and `hostHeader.ts`, on the SDK's own header parser. An absent
+// Origin is fine (server-side MCP clients send none); a present one must resolve to localhost or a
+// listed public host. Localhost stays allowed so the container's own health probe works. The scheme
+// is not checked: the guard is about WHICH host is trusted.
 
 // A plain `Host`: a bracketed IPv6 literal or a bare hostname/IPv4, with an optional port. Anything
 // with userinfo, whitespace, `/`, `\`, `?` or `#` could throw inside a URL parser downstream.

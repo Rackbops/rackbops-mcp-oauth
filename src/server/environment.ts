@@ -1,7 +1,8 @@
 // Which deployment a server is: `prod`, `dev`, or `local` (anything else a person names). Shown to
 // people and agents so a test server's answer is never taken for real data. Display only: nothing
 // security-relevant (issuer, hosts, grants, tokens) reads it. Moved from Meals for Two's and
-// tracker-mcp's `src/environment.ts`, which differed only in the names passed in here.
+// tracker-mcp's `src/environment.ts`, whose label logic differed only in the names passed in here
+// (their server instructions stay in each server).
 
 export const PROD_LABEL = "prod"
 

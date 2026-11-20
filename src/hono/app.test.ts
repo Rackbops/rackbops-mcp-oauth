@@ -1,12 +1,18 @@
-import { DatabaseSync } from "node:sqlite"
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client"
+import type { DatabaseSync } from "node:sqlite"
 import { Hono } from "hono"
 import { afterEach, describe, expect, it } from "vitest"
 import { type OAuthApp, oauthConfig } from "../config.js"
 import { buildToolServerFactory, type Caller } from "../server/dispatch.js"
 import { buildRegistry, loadContractTools, ToolError, withContent } from "../server/registry.js"
-import { OAuthStore, sha256Hex } from "../store.js"
-import { connect, fakeIdentity, type Requester, requester } from "../testing/index.js"
+import { type OAuthStore, sha256Hex } from "../store.js"
+import {
+  connect,
+  fakeIdentity,
+  mcpClient,
+  memoryStore,
+  type Requester,
+  requester,
+} from "../testing/index.js"
 import { hostGuard } from "./hostGuard.js"
 import { mountMcp, mountOAuth } from "./mount.js"
 import { requestTrace } from "./trace.js"
@@ -67,7 +73,7 @@ function build(options: { perMinute?: number; after?: () => void } = {}) {
   const now = { t: Date.now() }
   const logs: Record<string, unknown>[] = []
   const identity = fakeIdentity({ sub: "usr-anne", name: "Anne", roles: ["member"] })
-  const store = new OAuthStore(new DatabaseSync(":memory:"), () => now.t)
+  const store: OAuthStore = memoryStore(() => now.t)
   const oauth = oauthConfig(ISSUER, APP)
   const app = new Hono()
   app.use(
@@ -115,15 +121,8 @@ afterEach(async () => {
   open = undefined
 })
 
-async function client(b: Built, access: string): Promise<Client> {
-  const transport = new StreamableHTTPClientTransport(new URL(`${ISSUER}/mcp`), {
-    requestInit: { headers: { authorization: `Bearer ${access}`, host: HOST } },
-    fetch: (url, init) => b.app.fetch(new Request(url, init)),
-  })
-  const c = new Client({ name: "ChatGPT", version: "0.0.0" })
-  await c.connect(transport)
-  return c
-}
+const client = (b: Built, access: string) =>
+  mcpClient((r) => b.app.fetch(r), ISSUER, access, "ChatGPT")
 
 const errorBody = (result: { content?: unknown }) =>
   JSON.parse((result.content as { text: string }[])[0]?.text ?? "{}") as Record<string, unknown>
@@ -275,7 +274,7 @@ describe("the tool dispatch", () => {
     expect(errorBody(await call("duplicate"))).toEqual({
       code: "DUPLICATE",
       message: "Already done.",
-      result: { summary: "Done before." },
+      result: { summary: "Done before.", environment: "dev" },
     })
     expect(errorBody(await call("upstream"))).toEqual({
       code: "UNAVAILABLE",
@@ -312,7 +311,7 @@ describe("the tool dispatch", () => {
       { type: "text", text: "A picture." },
       { type: "image", data: "AAAA", mimeType: "image/png" },
     ])
-    expect(result.structuredContent).toEqual({ summary: "A picture." })
+    expect(result.structuredContent).toEqual({ summary: "A picture.", environment: "dev" })
     await c.close()
   })
 })

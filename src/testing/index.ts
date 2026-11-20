@@ -1,10 +1,14 @@
 import { createHash, randomBytes } from "node:crypto"
+import { DatabaseSync } from "node:sqlite"
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client"
+import { OAuthStore } from "../store.js"
 import type { Identity, IdentityPort } from "../usr.js"
 
 // An in-process OAuth client for a server's own tests, moved from Meals for Two's and tracker-mcp's
-// `src/test/harness.ts`: a fake usr identity, PKCE, and the register / authorize + consent / token
-// steps, run against the app's `fetch` with no network. The servers keep their own `harness()`,
-// which builds their app; these are the steps it then drives.
+// `src/test/harness.ts`: a fake usr identity, an in-memory store, PKCE, the register / authorize +
+// consent / token steps, and an MCP SDK client on the resulting token, all against the app's `fetch`
+// with no network. The servers keep their own `harness()`, which builds their app; these are the
+// steps it then drives.
 
 /** Sends a request to the app under test: `path` is resolved against the server's issuer. */
 export type Requester = (path: string, init?: RequestInit) => Promise<Response>
@@ -35,6 +39,11 @@ export function fakeIdentity(initial: Identity | null): IdentityPort & {
       who = next
     },
   }
+}
+
+/** An `OAuthStore` on a fresh `:memory:` database, on the test's clock. */
+export function memoryStore(clock: () => number = Date.now): OAuthStore {
+  return new OAuthStore(new DatabaseSync(":memory:"), clock)
 }
 
 export function pkce(): { verifier: string; challenge: string } {
@@ -134,4 +143,20 @@ export async function connect(
   if (tok.status !== 200) throw new Error(`token failed: ${tok.status} ${await tok.text()}`)
   const body = (await tok.json()) as { access_token: string; refresh_token: string; scope?: string }
   return { clientId, access: body.access_token, refresh: body.refresh_token, scope: body.scope }
+}
+
+/** An MCP SDK client signed in with `access`, talking to the app's `fetch` in-process. Close it. */
+export async function mcpClient(
+  fetch: (request: Request) => Response | Promise<Response>,
+  issuer: string,
+  access: string,
+  name = "test",
+): Promise<Client> {
+  const transport = new StreamableHTTPClientTransport(new URL(`${issuer}/mcp`), {
+    requestInit: { headers: { authorization: `Bearer ${access}`, host: new URL(issuer).host } },
+    fetch: (url, init) => Promise.resolve(fetch(new Request(url, init))),
+  })
+  const client = new Client({ name, version: "0.0.0" })
+  await client.connect(transport)
+  return client
 }

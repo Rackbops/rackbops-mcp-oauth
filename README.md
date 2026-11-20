@@ -69,33 +69,52 @@ Hono app.
 Beside the OAuth server, the package carries the code every Rackbops MCP server had its own copy of
 ([#3](https://github.com/Rackbops/rackbops-mcp-oauth/issues/3)). The name is narrower than what it
 holds, kept so existing installs and npm trusted publishing do not move. The root import stays free of
-these: each is a subpath, and `hono` and `@modelcontextprotocol/server` are optional peer
-dependencies, needed only by the subpaths that use them.
+these: each is a subpath. `hono`, `@modelcontextprotocol/server` and `@modelcontextprotocol/client` are
+optional peer dependencies, but a subpath loads what its row below names as soon as it is imported
+(`/server` loads the SDK even for `buildRegistry` alone). `ajv` is a plain dependency, installed with
+the root import too.
 
-| Import | What it holds | Needs |
-|---|---|---|
-| `@rackbops/mcp-oauth/server` | `loadContractTools` + `buildRegistry` (the server's `contracts/tools.json` is the only place a schema lives; strict Ajv; a handler not in the contract is a boot error), `buildToolServerFactory` (hand-dispatched `tools/call`: every failure is a `{code, message}` tool result, `environment` added where the output schema has it, `mapError` for an upstream the server knows), `ToolError`, `withContent`, `createBearerVerifier` (for the SDK's `requireBearerAuth`), `createEnvironment` (prod/dev/local label from the issuer host) | `@modelcontextprotocol/server` |
-| `@rackbops/mcp-oauth/http` | Framework-free: `createHostCheck` (Host/Origin allowlist over `Headers`), `parsePublicHosts`, `resolveClientSource` (the tunnel's client-IP header, last value), `currentTrace` | `@modelcontextprotocol/server` |
-| `@rackbops/mcp-oauth/hono` | `hostGuard`, `requestTrace` (one line per request, never a token, query or argument; `redactPath` masks a path that carries a credential), `mountOAuth` (the three routes with 16 KiB caps and the discovery documents), `mountMcp` (bearer gate, per-person rate limit, `after` hook, 405 `Allow`) | `hono`, `@modelcontextprotocol/server` |
-| `@rackbops/mcp-oauth/usr` | `createUsrMemberCheck({usrUrl, apiKey, app, role})` (usr's role lookup, fail closed, no redirects), `createDelegation({audience, ...})` (a short-lived usr delegation token per person and operation, cached until a minute before expiry), and their errors | -- |
-| `@rackbops/mcp-oauth/testing` | `requester`, `fakeIdentity`, `pkce`, `register`, `authorize`, `tokens`, `connect`: the OAuth flow in-process, for a server's own tests | -- |
+| Import                        | What it holds                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Needs                                  |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| `@rackbops/mcp-oauth/server`  | `loadContractTools` + `buildRegistry` (the server's `contracts/tools.json` is the only place a schema lives; strict Ajv; a handler not in the contract is a boot error), `buildToolServerFactory` (hand-dispatched `tools/call`: every failure is a `{code, message}` tool result, `environment` added where the output schema has it, `mapError` for an upstream the server knows), `ToolError`, `withContent`, `createBearerVerifier` (for the SDK's `requireBearerAuth`), `createEnvironment` (prod/dev/local label from the issuer host) | `@modelcontextprotocol/server`         |
+| `@rackbops/mcp-oauth/http`    | No Hono, so a `node:http` server can use it: `createHostCheck` (Host/Origin allowlist over `Headers`), `parsePublicHosts`, `resolveClientSource` (the tunnel's client-IP header, last value), `currentTrace`                                                                                                                                                                                                                                                                                                                                 | `@modelcontextprotocol/server`         |
+| `@rackbops/mcp-oauth/hono`    | `hostGuard`, `requestTrace` (one line per request, never a token, query or argument; `redactPath` masks a path that carries a credential), `mountOAuth` (the three routes with 16 KiB caps and the discovery documents), `mountMcp` (bearer gate, per-person rate limit, `after` hook, 405 `Allow`)                                                                                                                                                                                                                                          | `hono`, `@modelcontextprotocol/server` |
+| `@rackbops/mcp-oauth/usr`     | `createUsrMemberCheck({usrUrl, apiKey, app, role})` (usr's role lookup, fail closed, no redirects), `createDelegation({audience, ...})` (a short-lived usr delegation token per person and operation, cached until a minute before expiry), and their errors                                                                                                                                                                                                                                                                                 | --                                     |
+| `@rackbops/mcp-oauth/testing` | `requester`, `fakeIdentity`, `memoryStore`, `pkce`, `register`, `authorize`, `tokens`, `connect`, `mcpClient`: the OAuth flow and an MCP client in-process, for a server's own tests                                                                                                                                                                                                                                                                                                                                                         | `@modelcontextprotocol/client`         |
 
 A server built on them looks like this (tool handlers and instructions are the server's own):
 
 ```ts
 import { hostGuard, mountMcp, mountOAuth, requestTrace } from "@rackbops/mcp-oauth/hono"
 import { resolveClientSource } from "@rackbops/mcp-oauth/http"
-import { buildRegistry, buildToolServerFactory, loadContractTools } from "@rackbops/mcp-oauth/server"
+import {
+  buildRegistry,
+  buildToolServerFactory,
+  loadContractTools,
+} from "@rackbops/mcp-oauth/server"
 
 const contract = loadContractTools(new URL("../../contracts/tools.json", import.meta.url))
 const registry = buildRegistry(contract, HANDLERS)
 app.use("*", requestTrace(logger, { knownTools: new Set(contract.map((t) => t.name)) }))
 app.use("*", hostGuard(publicHosts))
-mountOAuth(app, { oauth, store, identity, memberCheck, source: (c) => resolveClientSource(c.req.raw.headers, "CF-Connecting-IP", peer(c)) })
+mountOAuth(app, {
+  oauth,
+  store,
+  identity,
+  memberCheck,
+  source: (c) => resolveClientSource(c.req.raw.headers, "CF-Connecting-IP", peer(c)),
+})
 const close = mountMcp(app, {
   oauth,
   store,
-  factory: buildToolServerFactory({ name: "my-server", title, instructions, registry, context: (caller) => ({ ...deps, sub: caller.sub }), environment: envLabel }),
+  factory: buildToolServerFactory({
+    name: "my-server",
+    title,
+    instructions,
+    registry,
+    context: (caller) => ({ ...deps, sub: caller.sub }),
+    environment: envLabel,
+  }),
   bodyCap: 1024 * 1024,
   perMinute: 60,
 })
