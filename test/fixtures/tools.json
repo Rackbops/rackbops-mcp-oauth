@@ -1,0 +1,60 @@
+{
+  "contractVersion": 1,
+  "tools": [
+    {
+      "name": "echo",
+      "title": "Echo",
+      "description": "Says the text back.",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "text": { "type": "string", "maxLength": 20 } },
+        "required": ["text"],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "summary": { "type": "string" },
+          "who": { "type": "string" },
+          "client": { "type": "string" },
+          "environment": { "type": "string" }
+        },
+        "required": ["summary"],
+        "additionalProperties": false
+      },
+      "annotations": { "readOnlyHint": true, "destructiveHint": false, "openWorldHint": false }
+    },
+    {
+      "name": "fail",
+      "title": "Fail",
+      "description": "Fails the way it is told to.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "how": { "enum": ["tool", "duplicate", "upstream", "bug", "bad_output", "picture"] }
+        },
+        "required": ["how"],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": { "summary": { "type": "string" } },
+        "required": ["summary"],
+        "additionalProperties": false
+      },
+      "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": false }
+    },
+    {
+      "name": "unhandled",
+      "title": "Unhandled",
+      "description": "In the contract, with no handler.",
+      "inputSchema": { "type": "object", "additionalProperties": false },
+      "outputSchema": {
+        "type": "object",
+        "properties": { "summary": { "type": "string" } },
+        "required": ["summary"]
+      },
+      "annotations": { "readOnlyHint": true, "destructiveHint": false, "openWorldHint": false }
+    }
+  ]
+}

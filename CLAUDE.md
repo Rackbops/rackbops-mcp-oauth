@@ -9,6 +9,9 @@ governs how I work; this covers only this repo.
   tables and columns, the consent-page wording and `Referrer-Policy: same-origin`. `src/app.test.ts`
   pins Meals for Two's rendering byte-for-byte; a change there needs a reason in the PR.
 - **App-specific text and names are options (`OAuthApp`), never branches on which app is calling.**
+- **The shared MCP server pieces are subpaths** (`/server`, `/http`, `/hono`, `/usr`, `/testing`; issue #3). The root
+  import stays free of them, so it needs neither `hono` nor the MCP SDK, which are optional peer dependencies. What
+  differs between servers (names, env vars, error caps, context) is an option, never a branch on the server.
 - **Public repo, public npm**: no hostnames, secrets or household data.
 - `just check` mirrors CI. Public repo, so all workflows run on GitHub-hosted runners (private repos use the
   self-hosted pool).
